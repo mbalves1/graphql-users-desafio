@@ -1,30 +1,48 @@
+const bcrypt = require('bcrypt-nodejs')
 const db = require('../../config/db')
 const { perfil: obterPerfil } = require('../Query/perfil')
 const { usuario: obterUsuario } = require('../Query/usuario')
 
-module.exports = {
-	async novoUsuario(_, { dados }) {
+const mutations = {
+
+	registrarUsuario(_, { dados }) {
+		return mutations.novoUsuario(_, {
+			dados: {
+				nome: dados.nome,
+				email: dados.email,
+				senha: dados.senha,
+			}
+		})
+	},
+
+	async novoUsuario(_, { dados }, ctx) {
 		// Implementar
+		ctx && ctx.validarAdmin()
 		try {
 			const idsPerfis = []
-			if(dados.perfis) {
-				for(filtro of dados.perfis) {
-					const perfil = await obterPerfil(_, {
-						filtro
-					})
-					if(perfil) idsPerfis.push(perfil.id)
-				}
+
+			if(!dados.perfis || !dados.perfis.length) {
+				dados.perfis = [{
+					nome: 'comum'
+				}]
 			}
 
-			// delete dados.perfil
-			const [ id ] = await db('usuarios')
-				.insert({
-					nome: dados.nome,
-					email: dados.email,
-					senha: dados.senha,
+			for(let filtro of dados.perfis) {
+				const perfil = await obterPerfil(_, {
+					filtro
 				})
+				if(perfil) idsPerfis.push(perfil.id)
+			}
 
-			for(perfil_id of idsPerfis) {
+			// criptografar a senha
+			const salt = bcrypt.genSaltSync()
+			dados.senha = bcrypt.hashSync(dados.senha, salt)
+
+			delete dados.perfis
+			const [ id ] = await db('usuarios')
+				.insert(dados)
+
+			for(let perfil_id of idsPerfis) {
 				await db('usuarios_perfis')
 					.insert({ perfil_id, usuario_id: id })
 			}
@@ -36,8 +54,10 @@ module.exports = {
 			throw new Error(err.sqlMessage)
 		}
 	},
-	async excluirUsuario(_, { filtro }) {
+	async excluirUsuario(_, { filtro }, ctx) {
 		// Implementar
+		ctx && ctx.validarAdmin()
+
 		try {
 			const usuario = await obterUsuario(_, { filtro })
 			if (usuario) {
@@ -52,13 +72,14 @@ module.exports = {
 			throw new Error(err.sqlMessage)
 		}
 	},
-	async alterarUsuario(_, { filtro, dados }) {
+	async alterarUsuario(_, { filtro, dados }, ctx) {
 		// Implementar
+		ctx && ctx.validarUsuarioFiltro(filtro)
 		try {
 			const usuario = await obterUsuario(_, { filtro })
 			if (usuario) {
 				const { id } = usuario
-				if(dados.perfis) {
+				if(ctx.admin && dados.perfis) {
 					await db('usuarios_perfis')
 						.where({ usuario_id: id}).delete()
 					
@@ -73,6 +94,12 @@ module.exports = {
 							})
 					}
 				}
+
+				if(dados.senha) {
+					const salt = bcrypt.genSaltSync()
+					dados.senha = bcrypt.hashSync(dados.senha, salt)
+				}
+
 				delete dados.perfis
 				await db('usuarios').where({ id })
 					.update(dados)
@@ -84,3 +111,5 @@ module.exports = {
 		}
 	}
 }
+
+module.exports = mutations
